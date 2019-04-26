@@ -1,0 +1,695 @@
+---
+title: "Wine_Quality2"
+author: "Jason Witry"
+date: "April 8, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loadPkg function, include = FALSE}
+# can add quietly=T option to the require() function
+loadPkg = function(x) { if (!require(x,character.only=T, quietly =T)) { install.packages(x,dep=T,repos="http://cran.us.r-project.org"); if(!require(x,character.only=T)) stop("Package not found") } }
+```
+
+```{r load packages,include=FALSE}
+loadPkg("ggplot2")
+loadPkg("corrplot")
+loadPkg("faraway")
+loadPkg("modelr")
+loadPkg("OneR")
+loadPkg("FSelector")
+loadPkg("stargazer")
+loadPkg("BSDA")
+loadPkg("foreign")
+loadPkg("ggplot2")
+loadPkg("MASS")
+loadPkg("Hmisc")
+loadPkg("reshape2")
+loadPkg("caret")
+```
+
+```{r,drawCM,include = F}
+draw_confusion_matrix <- function(cm) {
+
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('CONFUSION MATRIX', cex.main=2)
+
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#3F97D0')
+  text(195, 435, 'Class1', cex=1.2)
+  rect(250, 430, 340, 370, col='#F7AD50')
+  text(295, 435, 'Class2', cex=1.2)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=2)
+  text(245, 450, 'Actual', cex=1.3, font=2)
+  rect(150, 305, 240, 365, col='#F7AD50')
+  rect(250, 305, 340, 365, col='#3F97D0')
+  text(140, 400, 'Class1', cex=1.2, srt=90)
+  text(140, 335, 'Class2', cex=1.2, srt=90)
+
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS", xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=2)
+  text(10, 70, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=2)
+  text(30, 70, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=2)
+  text(50, 70, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=2)
+  text(70, 70, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=2)
+  text(90, 70, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+
+  # add in the accuracy information 
+  text(30, 35, names(cm$overall[1]), cex=1.5, font=2)
+  text(30, 20, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(70, 35, names(cm$overall[2]), cex=1.5, font=2)
+  text(70, 20, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+} 
+```
+
+```{r outlierKD_Sig, include=F}
+outlierKD_Sig <- function(dt, var,sig_test,remo) { 
+     var_name <- eval(substitute(var),eval(dt))
+     na1 <- sum(is.na(var_name))
+     m1 <- mean(var_name, na.rm = T)
+     sd1 <- sd(var_name,na.rm = T)
+     par(mfrow=c(2, 2), oma=c(0,0,3,0))
+     boxplot(var_name, main="With outliers")
+     hist(var_name, main="With outliers", xlab=NA, ylab=NA)
+     outlier <- boxplot.stats(var_name)$out
+     if (sig_test != 0){
+      outlier2 <- c()
+      for (outlie in outlier){
+        z <- (outlie - m1)/sd1
+        if (abs(z) > sig_test){
+          outlier2 <- c(outlier2,outlie)
+       }
+      }
+      outlier <- outlier2
+     }  
+
+     mo <- mean(outlier)
+     var_name <- ifelse(var_name %in% outlier, NA, var_name)
+     boxplot(var_name, main="Without outliers")
+     hist(var_name, main="Without outliers", xlab=NA, ylab=NA)
+     title("Outlier Check", outer=TRUE)
+     na2 <- sum(is.na(var_name))
+     cat("Outliers identified:", na2 - na1, "n")
+     cat("Propotion (%) of outliers:", round((na2 - na1) / sum(!is.na(var_name))*100, 1), "n")
+     cat("Mean of the outliers:", round(mo, 2), "n")
+     m2 <- mean(var_name, na.rm = T)
+     cat("Mean without removing outliers:", round(m1, 2), "n")
+     cat("Mean if we remove outliers:", round(m2, 2), "n")
+     #response <- readline(prompt="Do you want to remove outliers and to replace with NA? [yes/no]: ")
+     if(remo == 'y'){
+          dt[as.character(substitute(var))] <- invisible(var_name)
+          assign(as.character(as.list(match.call())$dt), dt, envir = .GlobalEnv)
+          cat("Outliers successfully removed", "n")
+          return(invisible(dt))
+     } else{
+          cat("Nothing changed", "n")
+          return(invisible(var_name))
+     }
+}
+```
+
+```{r TrTe_Scale,include = F}
+test_scale <- function(traindf,testdf){
+  for (col in colnames(traindf)){
+    train_mean <- mean(traindf[,col])
+    train_sd <- sd(traindf[,col])
+    testdf[,col] <- sapply(testdf[,col],zscore,ave = train_mean,stddev = train_sd)
+    
+  }
+  return(testdf)
+}
+```
+
+```{r Z Score,include = F}
+zscore <- function(inp,ave,stddev){
+  return((inp-ave)/stddev)
+}
+```
+
+```{r Standardization, include=F}
+standardization <- function(var){
+  m1 = mean(var,na.rm = T)
+  s1 = sd(var,na.rm = T)
+  return(sapply(var, zscore,ave=m1,stddev=s1))
+}
+```
+
+```{r,PCA}
+PCAxform <- function(df, z) { # z: TRUE or FALSE for z-score
+  # Obtain the dataframe with the Principal Components after the rotation
+  if(z==TRUE) { df = data.frame(scale(df))}
+  nmax = length(df)
+  pr.out = prcomp(na.omit(df),scale=z)
+  df1 = data.frame()
+  cnames = c()
+  for( i in 1:nmax ) {
+    vec = 0
+    cnames = c( cnames, paste("PC",i, sep="") )
+    for( j in 1:nmax ) { vec = vec + pr.out$rotation[j,i]*df[,j] }
+    if( length(df1)>0 ) { df1 = data.frame(df1,vec) } else { df1 = data.frame(vec) }
+    }
+  colnames(df1) <- cnames
+  return(df1)
+}
+```
+
+```{r,PCR}
+PCRxform <- function(df, z0,z1=T, y) { # z: TRUE or FALSE for z-score, y is either the column for y-variable, or the name of y-variable
+  # Obtain the dataframe with the Principal Components after the rotation for PCRegression
+  if( is.integer(y) ) { # y is integer
+    if( y>length(df) || y<1 ) {
+      print("Invalid column number")
+      return(NULL)
+    }
+    if(z0) { df1 = data.frame( scale(df[,y]) ) } else { df1 = df[,y] }
+    df = df[,-y]
+  } else { # y is not integer, so interpret as name
+    if(z0) { df1 = data.frame( scale( df[,names(df) == y] ) ) } else { df1 = df[,names(df) == y] }
+    df = df[names(df) != y]
+  }
+  print(length(df1))
+  if( length(df1)<1 ) {
+    print("Variable name not found in data.frame")
+    return(NULL)
+  }
+  df2 = PCAxform(df,z1)
+  df1 = data.frame(df1,df2)
+  return(df1)
+}
+```
+
+
+```{r,read_data}
+winequality <- read.csv('./winequality/winequality-white.csv',sep=';')
+```
+
+
+
+```{r Partition Data,include=F}
+set.seed(123)
+smp_size <- round(0.7*nrow(winequality))
+train_ind <- sample(seq_len(nrow(winequality)),size = smp_size)
+winequality_w <- winequality[train_ind,]
+winequality_test <- winequality[-train_ind,]
+### Shuffle
+rownames(winequality_w) <- 1:nrow(winequality_w)
+rownames(winequality_test) <- 1:nrow(winequality_test)
+### scale data
+
+```
+
+```{r,test_scaling}
+winequality_test_unsc <- winequality_test
+winequality_test_s <- test_scale(winequality_w[,-12],winequality_test[,-12])
+winequality_test <- data.frame(winequality_test_s,winequality_test[,12])
+colnames(winequality_test) <- colnames(winequality_w)
+```
+
+```{r Remove Outliers,include=F}
+outlierKD_Sig(winequality_w,fixed.acidity,3,'n')
+outlierKD_Sig(winequality_w,volatile.acidity,3,'n')
+outlierKD_Sig(winequality_w,citric.acid,3,'n')
+outlierKD_Sig(winequality_w,free.sulfur.dioxide,3,'y')
+outlierKD_Sig(winequality_w,total.sulfur.dioxide,3,'y')
+outlierKD_Sig(winequality_w,pH,3,'n')
+outlierKD_Sig(winequality_w,sulphates,3,'n')
+outlierKD_Sig(winequality_w,alcohol,3,'n')
+```
+
+```{r Create Quality Masks,include=F}
+mask3 <- winequality_w$quality == 3
+mask4 <- winequality_w$quality == 4
+mask5 <- winequality_w$quality == 5
+mask6 <- winequality_w$quality == 6
+mask7 <- winequality_w$quality == 7
+mask8 <- winequality_w$quality == 8
+mask9 <- winequality_w$quality == 9
+```
+
+```{r,remove39}
+winequality_w <- winequality_w[!mask3,]
+winequality_w <- winequality_w[winequality_w$quality != 9,]
+```
+
+```{r ReCreate Quality Masks,include=F}
+mask4 <- winequality_w$quality == 4
+mask5 <- winequality_w$quality == 5
+mask6 <- winequality_w$quality == 6
+mask7 <- winequality_w$quality == 7
+mask8 <- winequality_w$quality == 8
+```
+
+```{r Replication_Oversampling,include=F}
+### Straight replication oversampling
+### each number of replications is given by the amount of 6 ratings divided by 4
+### ratings, rounded to an integer. The 2 multiplied in the denominator is to ensure there aren't too many 4 classes, given the multiplier is already 21. We don't want to change the distributions too much
+#times3 = round(nrow(winequality_w[mask6,])/(nrow(winequality_w[mask3,])*5)) 
+times4 = round(nrow(winequality_w[mask6,])/(nrow(winequality_w[mask4,])*1.8))
+times5 = 1
+times6 = 1
+times7 = round(nrow(winequality_w[mask6,])/(nrow(winequality_w[mask7,])))
+times8 = round(nrow(winequality_w[mask6,])/(nrow(winequality_w[mask8,])*1.8))
+times9 = round(nrow(winequality_w[mask6,])/(nrow(winequality_w[mask9,])))
+
+#wineqqn <- winequality_w[mask3,]
+#wineqq3 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times3),]
+wineqqn <- winequality_w[mask4,]
+wineqq4 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times4),]
+wineqqn <- winequality_w[mask5,]
+wineqq5 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times5),]
+wineqqn <- winequality_w[mask6,]
+wineqq6 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times6),]
+wineqqn <- winequality_w[mask7,]
+wineqq7 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times7),]
+wineqqn <- winequality_w[mask8,]
+wineqq8 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times8),]
+#wineqqn <- winequality_w[mask9,]
+#wineqq9 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times9),]
+winequality_bal <- do.call("rbind",list(wineqq4,wineqq5,wineqq6,wineqq7,wineqq8))
+```
+
+```{r,hist_quality_before}
+ggplot(winequality_w, aes(quality)) +
+   geom_histogram(binwidth=1, col="black", fill="blue")+
+ggtitle("White Wine Quality Distribution") + labs(x="Quality", y='Number of Instances') +
+ geom_hline(yintercept=0, size=0.4, color="black")
+ggsave("./Presentation_Figs/Quality_BeforeUp.png", dpi=300, width=4, height=3)
+#hist(winequality_w$quality)
+```
+
+```{r,hist_quality}
+#rownames(winequality_bal) <- 1:nrow(winequality_bal)
+ggplot(winequality_bal, aes(quality)) +
+   geom_histogram(binwidth=1, col="black", fill="blue")+ggtitle("White Wine Quality Distribution")+
+labs(x="Quality", y='Number of Instances') +
+ geom_hline(yintercept=0, size=0.4, color="black")
+ggsave("./Presentation_Figs/Quality_After_Up.png", dpi=300, width=4, height=3)
+#hist(winequality_bal$quality)
+```
+
+
+```{r ANOVA Analysis,echo = F}
+winequality_bal$quality <- factor(winequality_bal$quality)
+fvals <- c()
+tukey <- c()
+pvals <- c()
+for (colu in colnames(winequality_bal[,-12])){
+  res.aov <- aov(winequality_bal[[colu]] ~ winequality_bal$quality)
+  fvals <- c(fvals,summary(res.aov)[[1]]["winequality_bal$quality","F value"])
+  pvals <- c(pvals,summary(res.aov)[[1]]["winequality_bal$quality","Pr(>F)"])
+  tukey <- c(tukey,TukeyHSD(res.aov))
+}
+sort1.fval <- cbind(colnames(winequality_bal[,-12]),fvals)
+pvals <- cbind(colnames(winequality_bal[,-12]),pvals)
+#names(sort1.fval) <- c("Variables","F_Value")
+sort1.fval <- sort1.fval[order(-fvals),]
+sort1.fval
+pvals
+names(tukey) <- colnames(winequality_bal[,-12])
+res <- summary(res.aov)
+```
+
+
+```{r ANOVA Analysis No Sampling,echo = F}
+winequality_w$quality <- factor(winequality_w$quality)
+fvals <- c()
+pvals <- c()
+tukey <- c()
+for (colu in colnames(winequality_w[,-12])){
+  res.aov <- aov(winequality_w[[colu]] ~ winequality_w$quality)
+  fvals <- c(fvals,summary(res.aov)[[1]]["winequality_w$quality","F value"])
+  pvals <- c(pvals,summary(res.aov)[[1]]["winequality_w$quality","Pr(>F)"])
+  tukey <- c(tukey,TukeyHSD(res.aov))
+}
+sort1.fval <- cbind(colnames(winequality_w[,-12]),fvals)
+pvals <- cbind(colnames(winequality_w[,-12]),pvals)
+#names(sort1.fval) <- c("Variables","F_Value")
+sort1.fval <- sort1.fval[order(-fvals),]
+sort1.fval
+pvals
+names(tukey) <- colnames(winequality_w[,-12])
+res <- summary(res.aov)
+```
+
+
+```{r,PCR_Data}
+winequality_bal$quality <- as.numeric(as.character(winequality_bal$quality))
+PCA_Wine <- PCRxform(winequality_bal,z0 = F, y = 'quality')
+```
+
+```{r,Lin_Reg}
+winequality_bal_sc <- data.frame(scale(winequality_bal[,-12]))
+winequality_bal_sc$quality <- winequality_bal$quality
+#linreg <- lm(quality ~ #fixed.acidity+volatile.acidity+residual.sugar+free.sulfur.dioxide+density+pH+sulphates+alcohol,data = winequality_bal_sc)
+linreg <- lm(quality ~ volatile.acidity+citric.acid+residual.sugar+free.sulfur.dioxide+pH+alcohol, data = winequality_bal_sc)
+summary(linreg)
+```
+
+```{r,test lin_reg}
+linreg.pred <- add_predictions(winequality_test,linreg)
+ggplot(linreg.pred,aes(quality,pred))+geom_point(aes(quality,pred))
+ggsave("./Presentation_Figs/Lin_Reg_Plot.png")
+```
+
+
+```{r Get Predictions,include = F}
+predictions <- add_predictions(winequality_test,linreg)
+```
+
+```{r Check Accuracy,echo=F}
+predictions$quality <- as.numeric(as.character(predictions$quality))
+predictions$pred <- sapply(predictions$pred,round)
+#ggplot(predictions,aes(quality,pred))+geom_point(aes(quality,pred))
+mask <- predictions$pred == predictions$quality
+cat("Percent Correct Predictions: ")
+nrow(predictions[mask,])/nrow(predictions)
+```
+
+```{r,lin_reg CM}
+#compute frequency of actual categories
+actual = as.data.frame(table(predictions$quality))
+names(actual) = c("Actual","ActualFreq")
+
+#build confusion matrix
+confusion = as.data.frame(table(predictions$quality, predictions$pred))
+names(confusion) = c("Actual","Predicted","Freq")
+
+#calculate percentage of test cases based on actual frequency
+confusion = merge(confusion, actual, by=c("Actual"))
+confusion$Percent = confusion$Freq/confusion$ActualFreq*100
+
+#render plot
+# we use three different layers
+# first we draw tiles and fill color based on percentage of test cases
+tile <- ggplot() +
+geom_tile(aes(x=Actual, y=Predicted,fill=Percent),data=confusion, color="black",size=0.1) +
+labs(x="Actual",y="Predicted")
+tile = tile + 
+geom_text(aes(x=Actual,y=Predicted, label=sprintf("%.1f", Percent)),data=confusion, size=3, colour="black") +
+scale_fill_gradient(low="grey",high="red")
+
+# lastly we draw diagonal tiles. We use alpha = 0 so as not to hide previous layers but use size=0.3 to highlight border
+tile = tile + 
+geom_tile(aes(x=Actual,y=Predicted),data=subset(confusion, as.character(Actual)==as.character(Predicted)), color="black",size=0.3, fill="black", alpha=0)
+
+tile
+
+ggsave("./Presentation_Figs/Lin_Reg_CM.png")
+```
+
+```{r,getPC_transform}
+pr.out <- prcomp(na.omit(winequality_bal[,-12]),scale = T)
+#dotted <- winequality_test[,-12]%*%pr.out$rotation
+eigs <- pr.out$sdev^2
+cum <- cumsum(eigs)/sum(eigs)
+cum
+### Apply rotation to wine_quality_test set
+df <- winequality_test[,-12]
+nmax <- ncol(df)
+winequality_test_pc <- data.frame()
+cnames <- c()
+  for( i in 1:nmax ) {
+    vec = 0
+    cnames = c( cnames, paste("PC",i, sep="") )
+    for( j in 1:nmax ) { vec = vec + pr.out$rotation[j,i]*df[,j] }
+    if( length(winequality_test_pc)>0 ) { winequality_test_pc = data.frame(winequality_test_pc,vec) } else { winequality_test_pc = data.frame(vec) }
+    }
+  colnames(winequality_test_pc) <- cnames
+
+winequality_test_final <- data.frame(winequality_test_pc,winequality_test[,12])
+cnames <- c(cnames,"quality")
+colnames(winequality_test_final) <- cnames
+
+p1 <- ggplot() + geom_line(aes(y = cum, x = 1:11, colour = "red"), stat="identity",size = 1.5)
+p1 <- p1 + ggtitle("PCA") + labs(x="Number of Components",y="Cumulative Variance Explained")
+p1
+ggsave("./Presentation_Figs/PCA_VarEx.png")
+```
+
+```{r ANOVA Analysis,echo = F}
+PCA_Wine$df1 <- factor(PCA_Wine$df1)
+fvals <- c()
+tukey <- c()
+pvals <- c()
+for (colu in colnames(PCA_Wine[,-1])){
+  PCA_Wine[[colu]]
+  res.aov <- aov(PCA_Wine[[colu]] ~ PCA_Wine$df1)
+  fvals <- c(fvals,summary(res.aov)[[1]]["PCA_Wine$df1","F value"])
+  pvals <- c(pvals,summary(res.aov)[[1]]["PCA_Wine$df1","Pr(>F)"])
+  tukey <- c(tukey,TukeyHSD(res.aov))
+}
+sort1.fval <- cbind(colnames(PCA_Wine[,-1]),fvals)
+pvals.sort <- cbind(colnames(PCA_Wine[,-1]),pvals)
+#names(sort1.fval) <- c("Variables","F_Value")
+sort1.fval <- sort1.fval[order(-fvals),]
+sort1.fval
+pvals.sort
+names(tukey) <- colnames(PCA_Wine[,-1])
+```
+
+```{r,tukey}
+#tukey
+```
+
+
+```{r,PCA_Reg}
+#winequality_train$df1 <- as.numeric(as.character(winequality_train$df1))
+PCA_Wine$df1 <- as.numeric(as.character(PCA_Wine$df1))
+#model1.qual = lm(df1~PC1+PC2+PC3+PC4+PC6+PC8+PC9+PC11,data=PCA_Wine)
+model1.qual = lm(df1~PC1+PC2+PC3+PC4+PC8+PC9+PC11,data=PCA_Wine)
+summary(model1.qual)
+```
+
+```{r Reg_Plot,echo = F,fig.width = 4,fig.height=2.5,fig.align="center"}
+model1.qual.pred <- add_predictions(winequality_test_final,model1.qual)
+ggplot(model1.qual.pred,aes(quality,pred))+geom_point(aes(quality,pred))
+ggsave("./Presentation_Figs/PCR_Plot.png")
+```
+
+```{r Get Predictions,include = F}
+predictions <- add_predictions(winequality_test_final,model1.qual)
+```
+
+```{r Check Accuracy,echo=F}
+predictions$quality <- as.numeric(as.character(predictions$quality))
+predictions$pred <- sapply(predictions$pred,round)
+#ggplot(predictions,aes(quality,pred))+geom_point(aes(quality,pred))
+mask <- predictions$pred == predictions$quality
+cat("Percent Correct Predictions: ")
+nrow(predictions[mask,])/nrow(predictions)
+confuse <- confusionMatrix(factor(predictions$pred),factor(predictions$quality))
+
+#fourfoldplot(confuse$table)
+
+
+#compute frequency of actual categories
+actual = as.data.frame(table(predictions$quality))
+names(actual) = c("Actual","ActualFreq")
+
+#build confusion matrix
+confusion = as.data.frame(table(predictions$quality, predictions$pred))
+names(confusion) = c("Actual","Predicted","Freq")
+
+#calculate percentage of test cases based on actual frequency
+confusion = merge(confusion, actual, by=c("Actual"))
+confusion$Percent = confusion$Freq/confusion$ActualFreq*100
+
+#render plot
+# we use three different layers
+# first we draw tiles and fill color based on percentage of test cases
+tile <- ggplot() +
+geom_tile(aes(x=Actual, y=Predicted,fill=Percent),data=confusion, color="black",size=0.1) +
+labs(x="Actual",y="Predicted")
+tile = tile + 
+geom_text(aes(x=Actual,y=Predicted, label=sprintf("%.1f", Percent)),data=confusion, size=3, colour="black") +
+scale_fill_gradient(low="grey",high="red")
+
+# lastly we draw diagonal tiles. We use alpha = 0 so as not to hide previous layers but use size=0.3 to highlight border
+tile = tile + 
+geom_tile(aes(x=Actual,y=Predicted),data=subset(confusion, as.character(Actual)==as.character(Predicted)), color="black",size=0.3, fill="black", alpha=0)
+
+tile
+
+ggsave("./Presentation_Figs/PCR_CM.png")
+
+```
+
+```{r,ordered logistic regression}
+
+winequality_bal$quality <- factor(winequality_bal$quality)
+## fit ordered logit model and store results 'm'
+#ord_log <- polr(quality ~ alcohol+volatile.acidity+free.sulfur.dioxide+chlorides+residual.sugar, data = winequality_bal, Hess=TRUE)
+ord_log <- polr(quality ~ fixed.acidity+volatile.acidity+residual.sugar+free.sulfur.dioxide+total.sulfur.dioxide+pH+density, data = winequality_bal, Hess=TRUE)
+## view a summary of the model
+summary(ord_log)
+
+```
+
+```{r,testpolr}
+winequality_polr_unsc <- cbind(winequality_test_unsc, predict(ord_log, winequality_test_unsc, type = "probs"))
+predictions_unsc <- predict(ord_log,winequality_test_unsc,type = "probs")
+colnames(predictions_unsc)
+```
+
+```{r,getaccuracy}
+as.numeric(names(which.max(predictions_unsc[,])))
+maxes <- apply(predictions_unsc,1,which.max)+3
+winequality_polr_unsc$pred <- maxes
+```
+
+```{r,polr_accuracy}
+#ggplot(predictions,aes(quality,pred))+geom_point(aes(quality,pred))
+mask <- winequality_polr_unsc$pred == winequality_polr_unsc$quality
+cat("Percent Correct Predictions: ")
+nrow(winequality_polr_unsc[mask,])/nrow(winequality_polr_unsc)
+confusionMatrix(factor(winequality_polr_unsc$pred),factor(winequality_polr_unsc$quality))
+```
+
+```{r,polr_CM_plot}
+#compute frequency of actual categories
+actual = as.data.frame(table(winequality_polr_unsc$quality))
+names(actual) = c("Actual","ActualFreq")
+
+#build confusion matrix
+confusion = as.data.frame(table(winequality_polr_unsc$quality, winequality_polr_unsc$pred))
+names(confusion) = c("Actual","Predicted","Freq")
+
+#calculate percentage of test cases based on actual frequency
+confusion = merge(confusion, actual, by=c("Actual"))
+confusion$Percent = confusion$Freq/confusion$ActualFreq*100
+
+#render plot
+# we use three different layers
+# first we draw tiles and fill color based on percentage of test cases
+tile <- ggplot() +
+geom_tile(aes(x=Actual, y=Predicted,fill=Percent),data=confusion, color="black",size=0.1) +
+labs(x="Actual",y="Predicted")
+tile = tile + 
+geom_text(aes(x=Actual,y=Predicted, label=sprintf("%.1f", Percent)),data=confusion, size=3, colour="black") +
+scale_fill_gradient(low="grey",high="red")
+
+# lastly we draw diagonal tiles. We use alpha = 0 so as not to hide previous layers but use size=0.3 to highlight border
+tile = tile + 
+geom_tile(aes(x=Actual,y=Predicted),data=subset(confusion, as.character(Actual)==as.character(Predicted)), color="black",size=0.3, fill="black", alpha=0)
+
+tile
+
+ggsave("./Presentation_Figs/POLR_CM.png")
+
+```
+```{r,polr_plot}
+#ggplot(winequality_polr_unsc,aes(quality,pred))+geom_point(aes(quality,pred))
+```
+
+```{r,scaled_polr}
+### Screate scaled train data
+winequality_bal_sc <- scale(winequality_bal[,-12])
+winequality_bal_sc$quality <- winequality_bal$quality
+winequality_bal_sc$quality <- factor(winequality_bal_sc$quality)
+## fit ordered logit model and store results 'm'
+ord_log_sc <- polr(quality ~ ., data = winequality_bal_sc, Hess=TRUE)
+
+## view a summary of the model
+summary(ord_log)
+```
+
+```{r,PCA_POLR}
+PCA_Wine <- PCA_Wine[,-13]
+PCA_Wine$df1 <- factor(PCA_Wine$df1)
+ord_log_PC <- polr(df1~.,data = PCA_Wine,Hess=T)
+summary(ord_log_PC)
+```
+
+```{r,testpolr_pc}
+winequality_polr_PC <- cbind(winequality_test_final, predict(ord_log_PC, winequality_test_final, type = "probs"))
+predictions_PC <- predict(ord_log_PC,winequality_test_final,type = "probs")
+colnames(predictions_unsc)
+```
+
+```{r,getaccuracy_pc}
+maxes <- apply(predictions_PC,1,which.max)+3
+winequality_polr_PC$pred <- maxes
+```
+
+```{r,polr_accuracy_pc}
+#ggplot(predictions,aes(quality,pred))+geom_point(aes(quality,pred))
+mask <- winequality_polr_PC$pred == winequality_polr_PC$quality
+cat("Percent Correct Predictions: ")
+nrow(winequality_polr_PC[mask,])/nrow(winequality_polr_PC)
+confusionMatrix(factor(winequality_polr_PC$pred),factor(winequality_polr_PC$quality))
+```
+
+```{r,get_mode}
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+```
+
+```{r}
+winequality_test_unsc0 <- winequality_test_unsc
+```
+
+```{r,ANOVA Classification}
+include <- c("alcohol","volatile.acidity","chlorides","total.sulfur.dioxide","residual.sugar")
+winequality_test_unsc <- na.omit(winequality_test_unsc)
+mean4 <- colMeans(winequality_w[winequality_w$quality == 4,-12],na.rm=T)
+mean5 <- colMeans(winequality_w[winequality_w$quality == 5,-12],na.rm=T)
+mean6 <- colMeans(winequality_w[winequality_w$quality == 6,-12],na.rm=T)
+mean7 <- colMeans(winequality_w[winequality_w$quality == 7,-12],na.rm=T)
+mean8 <- colMeans(winequality_w[winequality_w$quality == 8,-12],na.rm=T)
+
+sddev4 <- sapply(winequality_w[winequality_w$quality == 4,-12],sd,na.rm=T)
+sddev5 <- sapply(winequality_w[winequality_w$quality == 5,-12],sd,na.rm=T)
+sddev6 <- sapply(winequality_w[winequality_w$quality == 6,-12],sd,na.rm=T)
+sddev7 <- sapply(winequality_w[winequality_w$quality == 7,-12],sd,na.rm=T)
+sddev8 <- sapply(winequality_w[winequality_w$quality == 8,-12],sd,na.rm=T)
+
+
+means <- data.frame(rbind(mean4,mean5,mean6,mean7,mean8))
+sddevs <- data.frame(rbind(sddev4,sddev5,sddev6,sddev7,sddev8))
+colnames(means) <- colnames(winequality_test_unsc[,-12])
+colnames(sddevs) <- colnames(winequality_test_unsc[,-12])
+means <- means[,include]
+sddevs <- sddevs[,include]
+zmin = 10
+rowpred = c()
+ypred = c()
+for (j in 1:nrow(winequality_test_unsc[])){
+  rowpred <- c()
+  for(colu in colnames(winequality_test_unsc[,include])){
+    for (k in 1:nrow(means)){
+
+      z <- (winequality_test_unsc[j,colu] - means[k,colu])/sddevs[k,colu]
+      if(abs(z) < zmin){
+        zmin = abs(z)
+        kpred <- k + 3
+      }
+    }
+    rowpred <- c(rowpred,kpred)
+  }
+  ypred <- c(ypred,getmode(rowpred))
+}
+factor(ypred)
+```
+
+```{r,test_model}
+confusionMatrix(factor(ypred),factor(winequality_test_unsc0$quality))
+```
