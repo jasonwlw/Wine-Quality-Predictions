@@ -1,0 +1,528 @@
+---
+title: "Modeling Wine Quality"
+author: "Jason Witry, Jerome Doe, Armand Heydarian, Hang Zhao"
+date: "March 20, 2019"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+  html_document:
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#knitr::opts_chunk$set(fig.width=12, fig.height=8)
+```
+
+```{r knit notes,include = F}
+### To knit file to pdf and render stargazer tables, framed.sty and titling.sty are needed
+### To install on Linux:
+#https://github.com/rstudio/rmarkdown/issues/39
+### and follow same procedure for titling.sty
+### To install on Mac:
+#https://www.reed.edu/data-at-reed/software/R/r_studio.html
+### and follow instructions for MacTex
+```
+
+```{r loadPkg function, include = FALSE}
+# can add quietly=T option to the require() function
+loadPkg = function(x) { if (!require(x,character.only=T, quietly =T)) { install.packages(x,dep=T,repos="http://cran.us.r-project.org"); if(!require(x,character.only=T)) stop("Package not found") } }
+```
+
+```{r Chi2_Binned,include = FALSE}
+chi_binned_test <- function(vari, target, nbins){
+  #labs <- c(1:nbins)
+  binned <- bin(vari,nbins = nbins,method = "content")
+  contable = table(binned,target)
+  contable
+  chisq_w = chisq.test(contable)
+  return(chisq_w$statistic)
+}
+```
+
+```{r load packages,include=FALSE}
+loadPkg("ggplot2")
+loadPkg("corrplot")
+loadPkg("faraway")
+loadPkg("modelr")
+loadPkg("OneR")
+loadPkg("FSelector")
+loadPkg("stargazer")
+loadPkg("BSDA")
+#loadPkg("psycho")
+#loadPkg("tidyverse")
+```
+
+```{r Z Score,include = F}
+zscore <- function(inp,ave,stddev){
+  return((inp-ave)/stddev)
+}
+```
+
+```{r Standardization, include=F}
+standardization <- function(var){
+  m1 = mean(var,na.rm = T)
+  s1 = sd(var,na.rm = T)
+  return(sapply(var, zscore,ave=m1,stddev=s1))
+}
+```
+
+```{r outlierKD, include=F}
+outlierKD <- function(dt, var,remo) { 
+     var_name <- eval(substitute(var),eval(dt))
+     na1 <- sum(is.na(var_name))
+     m1 <- mean(var_name, na.rm = T)
+     sd1 <- sd(var_name,na.rm = T)
+     par(mfrow=c(2, 2), oma=c(0,0,3,0))
+     boxplot(var_name, main="With outliers")
+     hist(var_name, main="With outliers", xlab=NA, ylab=NA)
+     outlier <- boxplot.stats(var_name)$out
+     mo <- mean(outlier)
+     var_name <- ifelse(var_name %in% outlier, NA, var_name)
+     boxplot(var_name, main="Without outliers")
+     hist(var_name, main="Without outliers", xlab=NA, ylab=NA)
+     title("Outlier Check", outer=TRUE)
+     na2 <- sum(is.na(var_name))
+     cat("Outliers identified:", na2 - na1, "n")
+     cat("Propotion (%) of outliers:", round((na2 - na1) / sum(!is.na(var_name))*100, 1), "n")
+     cat("Mean of the outliers:", round(mo, 2), "n")
+     m2 <- mean(var_name, na.rm = T)
+     cat("Mean without removing outliers:", round(m1, 2), "n")
+     cat("Mean if we remove outliers:", round(m2, 2), "n")
+     #response <- readline(prompt="Do you want to remove outliers and to replace with NA? [yes/no]: ")
+     if(remo == 'y'){
+          dt[as.character(substitute(var))] <- invisible(var_name)
+          assign(as.character(as.list(match.call())$dt), dt, envir = .GlobalEnv)
+          cat("Outliers successfully removed", "n")
+          return(invisible(dt))
+     } else{
+          cat("Nothing changed", "n")
+          return(invisible(var_name))
+     }
+}
+```
+
+```{r outlierKD_Sig, include=F}
+outlierKD_Sig <- function(dt, var,sig_test,remo) { 
+     var_name <- eval(substitute(var),eval(dt))
+     na1 <- sum(is.na(var_name))
+     m1 <- mean(var_name, na.rm = T)
+     sd1 <- sd(var_name,na.rm = T)
+     par(mfrow=c(2, 2), oma=c(0,0,3,0))
+     boxplot(var_name, main="With outliers")
+     hist(var_name, main="With outliers", xlab=NA, ylab=NA)
+     outlier <- boxplot.stats(var_name)$out
+     if (sig_test != 0){
+      outlier2 <- c()
+      for (outlie in outlier){
+        z <- (outlie - m1)/sd1
+        if (abs(z) > sig_test){
+          outlier2 <- c(outlier2,outlie)
+       }
+      }
+      outlier <- outlier2
+     }  
+
+     mo <- mean(outlier)
+     var_name <- ifelse(var_name %in% outlier, NA, var_name)
+     boxplot(var_name, main="Without outliers")
+     hist(var_name, main="Without outliers", xlab=NA, ylab=NA)
+     title("Outlier Check", outer=TRUE)
+     na2 <- sum(is.na(var_name))
+     cat("Outliers identified:", na2 - na1, "n")
+     cat("Propotion (%) of outliers:", round((na2 - na1) / sum(!is.na(var_name))*100, 1), "n")
+     cat("Mean of the outliers:", round(mo, 2), "n")
+     m2 <- mean(var_name, na.rm = T)
+     cat("Mean without removing outliers:", round(m1, 2), "n")
+     cat("Mean if we remove outliers:", round(m2, 2), "n")
+     #response <- readline(prompt="Do you want to remove outliers and to replace with NA? [yes/no]: ")
+     if(remo == 'y'){
+          dt[as.character(substitute(var))] <- invisible(var_name)
+          assign(as.character(as.list(match.call())$dt), dt, envir = .GlobalEnv)
+          cat("Outliers successfully removed", "n")
+          return(invisible(dt))
+     } else{
+          cat("Nothing changed", "n")
+          return(invisible(var_name))
+     }
+}
+```
+
+```{r Subset Distribution,include=F}
+subset_dist <- function(mask,var,data){
+  return(data$var[mask])
+}
+```
+
+```{r remove Null,include = F}
+### Find and remove null values
+get_null <- function(lis){
+  mask <- !lapply(list(lis),is.na)[[1]]
+  return(mask)
+}
+```
+
+# Chapter 1: Introduction
+
+While the earliest evidence of wine is debatable topic, its consumption has been and is still enjoyed by people all over the globe (OIV, 2018). Wine Prices in today’s market range from a \$6 Gazela Vinho Verde bottle to a \$7,447 Domaine Leroy Chambertin Grand Cru bottle. One integral part of wine quality is how it tastes, and one may argue this positively correlates to its cost in most cases. However, there is subjectivity associated with taste. We all have different preferences, palates, hormones that strike our taste buds differently, and even some biases when it comes to taste. 
+
+This brings up the question of what method is currently available to ensure wine quality?  Traditionally, knowledgeable and trained wine professionals known as sommeliers taste and rate wine (Ebeler, 1999). Some of the things they look for are the dryness, sweetness, tears, color, and clarity of a wine. Although sommeliers are great at their job, their services can be cost intensive, time consuming and the sample is often too small. With the potential exception of small sample sizes, these issues can be mitigated by applying data science techniques to determine from a physicochemical perspective why sommeliers favor certain wines over others. The goal of this work is to answer two questions: What properties of wine are the best predictors of wine quality (according to wine certification experts) and what prediction accuracy can we obtain by modeling wine quality with these features in a linear regression?
+
+An alternative data mining approach was used to calculate wine taste preferences using physicochemical properties by the Department of information Systems/R&D Center Algoritmi, University of Minho and Viticulture Commission of the Vinho Verde Region (Cortez et al., 2009). Their analysis covered a fairly large dataset to include data on red and white vinho verde wines. In our effort to identify physical wine properties that relate or predict wine quality, we will be focusing only on the white vinho verde wine data. Our derived variables, which prove to be the strongest predictor of quality, will then be compared to those presented in the conclusion of the work by the Department of information Systems/R&D Center Algoritmi, University of Minho and Viticulture Commission of the Vinho Verde Region. We will use their predictive accuracy of 88% (Cortez et al., 2009) as a benchmark for our own linear regression.
+
+
+
+# Chapter 2: Data Description, Variable Description and Exploratory Data Analysis
+
+## Data Description
+
+The data used for our investigation contains information on 4,898 white wines from the Minho region of Portugal, dubbed vinho verde. The wine samples were collected from May 2004 to February 2007 by a computerized system (iLab) that automatically handles wine sample testing. Only samples that were tested by the official certification entity, the CVRVV, were used in the data. 11 physicochemical properties of wine were used, listed in the table below. The quality is a number on a scale from 0 (poor) to 10 (excellent) determined by the median rating of at least three sensory assessors. 
+
+
+
+```{r Read_Data,include=F}
+winequality_w <- read.csv('./winequality/winequality-white.csv',sep=';')
+#winequality_r <- read.csv('./winequality/winequality-red.csv',sep=';')
+```
+
+The table below presents the physicochemical features available in our dataset as well as relevant statistics. While examining the descriptive statistics, the dataset variables are presented with N indicating that there is the same amount of occurrences for each variable, so no data is missing. In the range, there appears to be a heavy skew towards the end of the range, within the 75th to 100th percentile, while it is not as heavily skewed within the 25th percentile. This applies to almost all of our variables.
+
+```{r View_Data,results='asis',echo = F}
+### Inline latex table of dataset statistics
+stargazer(winequality_w,header=FALSE,type='latex')
+```
+## Limitations
+We see a few limitations to our dataset here; there are only 11 physicochemical properties being studied, while there are many hundreds of chemicals present in wine that may subtly affect the quality. However, these are likely the most significant, as we will see in the Variable Description.
+
+Also, for some of the quality ratings only three certification expert's opinions were used. This is a small sample size that could be a very unreliable prediction of wine quality that may affect the model.
+
+## Variable Description
+
+The acids in wine are an important component in both winemaking and the finished product of wine. They have direct influences on the color, balance and taste of the wine as well as the growth of yeast during fermentation and protecting the wine from bacteria. Traditionally total acidity is divided into two groups, the volatile acids and the fixed acids. The citric acid is generally used by winemakers in acidification to boost the wine's total acidity. The strength of acidity is measured according to pH, with most wines having a pH between 2.9 and 3.9. Generally, the lower the pH, the higher the acidity in the wine. (Wikipedia, Acids in Wine)
+
+Among the components influencing how sweet a wine will taste is residual sugar, which typically refers to the sugar remaining after fermentation stops. One rule of thumb in wine tasting is that wines with lower alcohol content will have more residual sugars, because during fermentation yeast converts the sugars to alcohol. The less alcohol is generated by yeast, the more residual sugar there is. This is not a perfect relationship, as a grape with low sugar levels that has all of it's sugar converted to alcohol will produce a wine with low alcohol content and no residual sugar. How sweet a wine will taste is also controlled by the acidity, alcohol levels and chlorides. Sugars and alcohol enhance a wine's sweetness; acids and chlorides counteract it. The density of wine is close to that of water depending on the percent alcohol and sugar content. (Wikipedia, Sweetness in wine)
+
+Sulfur Dioxide ($SO_{2}$) is used as an antioxidant and preservative and has become widely used in winemaking. It is present in wine in free and bound states. The total sulfur dioxide is the sum of all the $SO_{2}$ in the wine, while free refers to dissolved $SO_{2}$ that is not chemically bound to another molecular structure. Excessive amounts of $SO_{2}$ can inhibit fermentation and cause undesirable sensory effects. Sulphates are a wine additive which can contribute to sulfur dioxide levels in wine. (Wikipedia, Sulfur dioxide)
+
+Because the physicochemical properties covered in this dataset give the alcohol content of the wine, the Sulphur Dioxide content, the sweetness and acidity, we can say with reasonable certainty that the variables covered here are likely the biggest indicators of the wine quality.
+
+## Exploratory Data Analysis
+
+```{r Examine Target Variable,echo=F,fig.width=4,fig.height=2.5,fig.align="center"}
+ggplot(winequality_w, aes(quality)) +
+    geom_histogram(binwidth=1) +
+labs(title="White Wine Quality Distribution", x="Quality", y='Number of Instances') +
+  geom_hline(yintercept=0, size=0.4, color="black")
+ggsave("Quality.png", dpi=300, width=4, height=3)
+```
+
+
+
+From the above histogram of the quality distribution (our target variable), we can see that it is approximately normal, i.e. with more average ratings than extreme ones. This could lead to issues in trying to fit our model. To mitigate this, we use a simple replication algorithm that takes observations in under-represented classes and simply replicates them a specified number of times. One limitation of this method is that if the under-represented classes are replicates too many times, the model will become severely overfit. Therefore, we adjusted the replicating factor in order to ensure we maintained the normal shape of our data.
+
+Before balancing classes, we note that after testing the linear regression model on the full class set with replication sampling, we discovered that there is simply not enough information to predict the 3, 8 and 9 quality classes with our current methods. Trying to include these qualities decreases the model prediction accuracy significantly, from about 46% to about 30%. Replication oversampling does not provide any new information for fitting, it just ensures that the algorithm sees a similar number of data points for each class to prevent overfitting to over-represented classes. Therefore, we will eliminate the classes 3, 8 and 9 as outliers.
+
+```{r OutlierKD on Quality,include = F,message = F, results = 'hide'}
+outlierKD(winequality_w,quality,'y')
+```
+
+
+
+
+```{r Create Quality Masks,include=F}
+mask3 <- winequality_w$quality == 3
+mask4 <- winequality_w$quality == 4
+mask5 <- winequality_w$quality == 5
+mask6 <- winequality_w$quality == 6
+mask7 <- winequality_w$quality == 7
+mask8 <- winequality_w$quality == 8
+mask9 <- winequality_w$quality == 9
+```
+
+```{r Replication_Oversampling,include=F}
+### Straight replication oversampling
+### each number of replications is given by the amount of 6 ratings divided by 4
+### ratings, rounded to an integer. The 2 multiplied in the denominator is to ensure there aren't too many 4 classes, given the multiplier is already 21. We don't want to change the distributions too much
+#times3 = round(nrow(winequality_w[mask6,])/(nrow(winequality_w[mask3,])*5)) 
+times4 = round(nrow(winequality_w[mask6,])/(nrow(winequality_w[mask4,])*2))
+times5 = 1
+times6 = 1
+times7 = round(nrow(winequality_w[mask6,])/(nrow(winequality_w[mask7,])))
+#times8 = round(nrow(winequality_w[mask6,])/(nrow(winequality_w[mask8,])*1.5))
+#times9 = round(nrow(winequality_w[mask6,])/(nrow(winequality_w[mask9,])*2))
+
+#wineqqn <- winequality_w[mask3,]
+#wineqq3 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times3),]
+wineqqn <- winequality_w[mask4,]
+wineqq4 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times4),]
+wineqqn <- winequality_w[mask5,]
+wineqq5 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times5),]
+wineqqn <- winequality_w[mask6,]
+wineqq6 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times6),]
+wineqqn <- winequality_w[mask7,]
+wineqq7 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times7),]
+#wineqqn <- winequality_w[mask8,]
+#wineqq8 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times8),]
+#wineqqn <- winequality_w[mask9,]
+#wineqq9 <- wineqqn[rep(seq_len(nrow(wineqqn)), each=times9),]
+winequality_bal <- do.call("rbind",list(wineqq4,wineqq5,wineqq6,wineqq7))
+```
+
+Below is a plot of the quality after the classes have been balanced and outliers removed. We can see that the normal distribution is maintained, but under-represented classes will play a more dominant role in our model. 
+
+```{r View Balanced Classes,echo=F,message = F, results = 'hide',fig.width=4,fig.height=2.5,fig.align="center"}
+ggplot(winequality_bal, aes(quality)) +
+    geom_histogram(binwidth=1) +
+labs(title="White Wine Quality Distribution", x="Quality", y='Number of Instances') +
+  geom_hline(yintercept=0, size=0.4, color="black")
+#ggsave("Quality.png", dpi=300, width=4, height=3)
+```
+
+
+
+
+An initial view into how the variables are related is provided in the correlation plot below. We see that alcohol and density have a strong inverse correlation of -0.80. This makes sense given that alcohol is less dense than wine on average. The residual sugar and density variables are strongly positively correlated at 0.84, and the residual sugar and alcohol content are inversely correlated. These verify our descriptions of the variables above. The total sulfur dioxide and free sulfur dioxide are also fairly strongly correlated, at around 0.61. This makes sense, as both variables measure the same quantity ($SO_{2}$) in different states.
+
+We can get a preliminary sense of what variables may be indicators of overall wine quality from this plot as well. Alcohol, for example, has the strongest correlation at 0.42. Density is second strongest at -0.31, followed by volatile acidity (-0.23), chlorides (-0.2), total sulfur dioxide (-0.16), and fixed acidity and residual sugar (-0.10 for both). Constructing a linear model from these variables may provide an indication as to their predictive power. It should be noted that this linear model will not include density, due to the very strong relationship between density and alcohol. It is likely they represent similar information. When it comes down to choosing between these two variables, we prefer alcohol as a predictor because it is a very noticeable quantity in wine that sommeliers look for. Between free sulfur dioxide and total sulfur dioxide, we believe both variables should remain in the dataset for testing. There does not seem to be any physical or sensory reason to prefer one, and the correlation is not nearly as strong as density and alcohol or density and residual sugar.
+
+```{r Examine Data Correlations0,echo=F,fig.width=5,fig.height=5}
+na_out = na.omit(winequality_bal)
+corrs <- cor(na_out)
+corrplot(corrs)
+```
+```{r Drop Density,include=F}
+winequality_bal <- winequality_bal[,-8]
+```
+
+
+To deal with outliers in our data, we use the OutlierKD function. However, we do not wish to remove all of the outliers from our data and the boxplots below (under Outliers Not Removed) show that some outliers that are $1.5*IQR$ may not require removal; i.e. they are likely novelty data points. In the residual sugar plot, it appears that a singular data point lies far away from all others. This is an outlier we remove, as opposed to the outliers shown in the box plot below for chlorides. In that box plot, we see all the values above the final quartile are close, and don't deviate far from the body of the plot. These are likely novelty outliers. All of our data fell into one of these two categories, and we removed those outliers that were singular separate values and kept the outliers that were closely clustered and close to the center. 
+
+Therefore, we impose a more lenient outlier detection method using the Z-score. Outliers are only removed if they score higher than the Z-score. We use this method for all features with the notable exception of quality, which has already been cleaned.
+
+To further illustrate our outlier removal decisions, below are boxplots for all variables where we removed the outliers outliers were removed, followed by 1 where outliers were not removed.
+
+Outliers Removed:
+
+```{r Removed Outliers, echo = F,message = F,results = 'hide',fig.width = 4,fig.height = 2.5,fig.align="center"}
+ggplot(winequality_bal, aes(x = '', y = residual.sugar)) +
+    geom_boxplot() +
+labs(title="White Wine Residual Sugar Distribution",y = "Residual Sugar") 
+  geom_hline(yintercept=0, size=0.4, color="black")
+  
+ggplot(winequality_bal, aes(x = '', y = free.sulfur.dioxide)) +
+    geom_boxplot() +
+labs(title="White Wine Free Sulfur Dioxide Distribution", y = "Free Sulfur Dioxide") 
+  geom_hline(yintercept=0, size=0.4, color="black")
+  
+ggplot(winequality_bal, aes(x = '', y = total.sulfur.dioxide)) +
+    geom_boxplot() +
+labs(title="White Wine Total Sulfur Dioxide Distribution", y = "Total Sulfur Dioxide") 
+  geom_hline(yintercept=0, size=0.4, color="black")
+```
+
+Outliers Not Removed:
+
+```{r Non-Removed Outliers, echo = F,message = F,results = 'hide',fig.width=4,fig.height = 2.5,fig.align = "center"}
+
+ggplot(winequality_bal, aes(x = '', y = pH)) +
+    geom_boxplot() +
+labs(title="White Wine pH Distribution", y = "pH") 
+  geom_hline(yintercept=0, size=0.4, color="black")
+```
+
+```{r Remove Outliers,include=F}
+outlierKD_Sig(winequality_bal,fixed.acidity,3,'n')
+outlierKD_Sig(winequality_bal,volatile.acidity,3,'n')
+outlierKD_Sig(winequality_bal,citric.acid,3,'n')
+outlierKD_Sig(winequality_bal,free.sulfur.dioxide,3,'y')
+outlierKD_Sig(winequality_bal,total.sulfur.dioxide,3,'y')
+outlierKD_Sig(winequality_bal,pH,3,'n')
+outlierKD_Sig(winequality_bal,sulphates,3,'n')
+outlierKD_Sig(winequality_bal,alcohol,3,'n')
+```
+ 
+
+```{r View Sample Outlier Removals,echo = F,message = F,results = 'hide'}
+outlierKD_Sig(winequality_bal,residual.sugar,3,'y')
+```
+
+The figure above shows an outlier check with the variable of residual sugar. As the first row indicates there is a heavy skew on the left, between 0 and 15 for the variable when the outliers are included, while the graph on the second row indicates there is a more evenly spread distribution when the outliers are excluded. Many of our variables have are skewed in such a manner, but for this variable it is mainly driven by one large outlier, which should be removed.
+
+
+```{r View Sample Outlier Non-Removals, echo = F,message = F,results = 'hide'}
+outlierKD_Sig(winequality_bal,chlorides,3,'n')
+```
+
+Above is an example of an outlier check done on a variable where we did not remove outliers, chlorides. We can see that there is a large skew in this variable, but no one or few data points stick out away from the rest, and so it seems like the outliers are not errors, but novelties.
+
+
+For the sake of completeness, it is worth noting that our correlation plot is not significantly changed by the removal of outliers. Therefore, we can conclude that the relationships in our model were not significantly affected by them. Note also that at this point, we have dropped the density column.
+
+
+```{r Examine Data Correlations1,echo=F,fig.width=5,fig.height=5}
+na_out <- na.omit(winequality_bal)
+corrs <- cor(na_out)
+corrplot(corrs)
+```
+
+# Chapter 3: Feature Selection and Standardization
+
+## ANOVA 
+
+Given that our prediction variables are all continuous and the target variable is discrete with more than two classes, we will use the analysis of variance (ANOVA) test to determine which features we will use in our model. The idea is that the ANOVA test will compare sub-distributions of each feature for each quality, and determine if the means are significantly different. The ideal feature would create distinct distributions for each quality rating and a poor feature would create similar distributions for each quality rating. We rate our variables based on the F-statistic to see which are the best predictors. In general, the higher the F-statistic, the better the predictor. 
+
+To determine specifically which distributions are significantly different, we use a Tukey Test. The Tukey Test will tell us for which quality ratings the feature variable has significantly different distribution means. For example, if the Tukey Test returns a significant p-value for the distributions between 4-5, then the variable will likely be able to distinguish between the classes. If the p-value is not significant however, the variable may have trouble with the two classes and may pass the error on to the model. The Tukey Test will give us valuable insight as to which quality ratings may confuse the algorithm, as some features may not generate significantly different distributions for all variables. 
+
+Our feature selection method differs slightly from (Cortez et al. 2009), who use backward selection governed by sensitivity analysis. Sensitivity analysis is an algorithm that determines the variance of the model output with respect to each input variable. The importance of the feature will likely be determined by how changing it perturbs the output, that is the features that create the highest variance in the output will be the most important. The procedure consists of holding all other variables at their average values except for the value of interest, and then computing the model variance as follows:
+
+```{r ANOVA Analysis,echo = F}
+winequality_bal$quality <- factor(winequality_bal$quality)
+fvals <- c()
+tukey <- c()
+for (colu in colnames(winequality_bal[,-11])){
+  res.aov <- aov(winequality_bal[[colu]] ~ winequality_bal$quality)
+  fvals <- c(fvals,summary(res.aov)[[1]]["winequality_bal$quality","F value"])
+  tukey <- c(tukey,TukeyHSD(res.aov))
+}
+sort1.fval <- cbind(colnames(winequality_bal[,-11]),fvals)
+#names(sort1.fval) <- c("Variables","F_Value")
+sort1.fval <- sort1.fval[order(-fvals),]
+sort1.fval
+names(tukey) <- colnames(winequality_bal[,-11])
+```
+
+The 5 variables predicted as the most important differ somewhat from those in (Cortez et al., 2009). They found that the 5 most important variables were sulphates, alcohol, residual sugar, citric acid and total sulfur dioxide in that order. 
+
+## Standardizing Features
+
+In an effort to follow the procedure in (Cortez et al., 2009), we normalize the data by standardizing it to a mean of 0 and a variance of 1 (Hastie et al, 2001), to ensure the model is not sensitive to variables that tend to be large. For example, free sulfur dioxide is larger than any of the other variables used in our fit. Below are two histograms of the alcohol content feature, showing the distribution before and after standardizing as an example.
+
+```{r Standardize Features,echo = F,fig.width=4,fig.height=2.5,fig.align="center"}
+features_train1 <- 0
+features_train1 <- data.frame(matrix(nrow = nrow(winequality_bal),ncol = 0))
+features_train1$alcohol <- standardization(winequality_bal$alcohol)
+features_train1$chlorides <- standardization(winequality_bal$chlorides)
+features_train1$volatile.acidity <- standardization(winequality_bal$volatile.acidity)
+features_train1$fixed.acidity <- standardization(winequality_bal$fixed.acidity)
+features_train1$free.sulfur.dioxide <- standardization(winequality_bal$free.sulfur.dioxide)
+features_train1$residual.sugar <- standardization(winequality_bal$residual.sugar)
+features_train1$total.sulfur.dioxide <- standardization(winequality_bal$total.sulfur.dioxide)
+features_train1$quality <- winequality_bal$quality
+
+features_train1 <- na.omit(features_train1)
+
+ggplot(winequality_bal, aes(alcohol)) +
+    geom_histogram(binwidth=1) +
+labs(title="Alcohol Distribution (Before)", x="Alcohol Content", y='Number of Instances') +
+  geom_hline(yintercept=0, size=0.4, color="black")
+
+ggplot(features_train1, aes(alcohol)) +
+    geom_histogram(binwidth=1.0) +
+labs(title="Alcohol Distribution (After)", x="Alcohol Content", y='Number of Instances') +
+  geom_hline(yintercept=0, size=0.4, color="black")
+
+```
+
+
+# Chapter 4: Results
+
+Using our 5 best predictor variables according to ANOVA analysis (alcohol, total sulfur dioxide, fixed acidity, volatile acidity, chlorides), we will fit a continuous linear regression to the quality. Given that our quality is a factor variable, and the linear regression will return floating point numbers that may be between the quality ratings, we will use the rating it is closest to as the quality prediction by rounding.
+
+(Cortez et al., 2009) used several models in their approach, including multiple regression and support vector machines (SVM). Given that we also use multiple regression, we will compare our results to that model as well as SVM as it is their best model.
+
+## Partitioning Data
+
+Next, we split our data into training and test samples. The training sample will consist of approximately 70% of our dataset, and the test sample will consist of the remaining 30%. We will use the training sample to build our linear regression, and then use the remaining test sample to determine the predictive accuracy.
+
+
+```{r Partition Data,include=F}
+set.seed(123)
+smp_size <- round(0.7*nrow(features_train1))
+train_ind <- sample(seq_len(nrow(features_train1)),size = smp_size)
+winequality_train <- features_train1[train_ind,]
+winequality_test <- features_train1[-train_ind,]
+### Shuffle
+rownames(winequality_train) <- 1:nrow(winequality_train)
+rownames(winequality_test) <- 1:nrow(winequality_test)
+```
+
+
+```{r Regression,include = F}
+winequality_train$quality <- as.numeric(as.character(winequality_train$quality))
+model1.qual = lm(quality~alcohol+total.sulfur.dioxide+free.sulfur.dioxide+volatile.acidity+chlorides,data=winequality_train)
+summary(model1.qual)
+```
+We tried three fits to the quality, the first of which used all 5 variables predicted by ANOVA analysis. For this model, we saw that the total sulfur dioxide variable was not significant in the fit with a p-value of 0.8151. The coefficient was also very small, and the error was 4 times as large as the coefficient itself. These led us to believe total sulfur dioxide was not a good predictor and needed replacement. The next highest F-statistic ranking was residual sugar, so we used that predictor instead of total sulfur dioxide for our next model. After this regression fit, we saw that chlorides was no longer significant with a p-value of 0.0898. The error in the coefficient was almost half of the coefficient itself, so we replaced chlorides with the next variable on our ANOVA list, fixed acidity.
+
+```{r Regression2,include = F}
+winequality_train$quality <- as.numeric(as.character(winequality_train$quality))
+model1.qual = lm(quality~alcohol+residual.sugar+free.sulfur.dioxide+volatile.acidity+chlorides,data=winequality_train)
+summary(model1.qual)
+```
+
+```{r Regression3,echo = F}
+winequality_train$quality <- as.numeric(as.character(winequality_train$quality))
+model1.qual = lm(quality~alcohol+residual.sugar+free.sulfur.dioxide+volatile.acidity+fixed.acidity,data=winequality_train)
+summary(model1.qual)
+print("VIF")
+vif(model1.qual)
+```
+Our final model consisted of alcohol, volatile acidity, free sulfur dioxide, residual sugar, and fixed acidity. The specifics on our final regression fit are reported above.
+
+## Testing Fit
+
+Below is a plot of the prediction versus the quality for the test set. Below that is the percent accuracy, measured by the ratio of predictions that are within 0.5 of the actual quality. For example, if the prediction for a quality 5 wine lies in the range 4.5 <= quality < 5.5, it is a correct prediction. 
+
+We can see that the predictions are very spread, and no single class is perfectly predicted. As expected, our model is still not very accurate at predicting a quality of 4. This is likely due to the fact that there is less information on that class than the others, as replication oversampling does not provide any new information.
+
+```{r Reg_Plot,echo = F,fig.width = 4,fig.height=2.5,fig.align="center"}
+model1.qual.pred <- add_predictions(winequality_test,model1.qual)
+ggplot(model1.qual.pred,aes(quality,pred))+geom_point(aes(quality,pred))
+```
+
+```{r Get Predictions,include = F}
+predictions <- add_predictions(winequality_test,model1.qual)
+```
+
+```{r Check Accuracy,echo=F}
+predictions$quality <- as.numeric(as.character(predictions$quality))
+predictions$pred <- lapply(predictions$pred,round)
+#ggplot(predictions,aes(quality,pred))+geom_point(aes(quality,pred))
+mask <- predictions$pred == predictions$quality
+cat("Percent Correct Predictions: ")
+nrow(predictions[mask,])/nrow(predictions)
+```
+
+# Chapter 5: Conclusion
+
+In conclusion, we have determined the best model for our linear regression with 5 predictors is the above using alcohol content, volatile acidity, fixed acidity, free sulfur dioxide and residual sugar. These variables seem to make sense; sulfur dioxide is a preservative in the wine, which may contribute to freshness. Too much volatile acidity tends to overwhelm the wine with a vinegar flavor, reducing the quality. This variable also has a negative coefficient in our fit, which is expected. Residual sugar contributes to the sweetness of the wine, which is a good indication of quality as people can easily pick up on sweetness. Alcohol content is related to sweetness, but is also a quantity that sticks out on it's own. It is one of the most recognizable characteristics of a wine.
+
+The ANOVA analysis yielded total sulfur dioxide in the top 5 predictors, but it can be seen that the predictor was not significant in the model as the p-value was very large. When we replace total sulfur dioxide with residual sugar, the fit improves marginally, as the $R^{2}$ value improves from 0.3064 to 0.3185. So we adopt the model with residual sugar. After trying this regression, we found that chlorides was no longer statistically significant to the fit with a p-value of 0.0898. In addition, the error on the coefficient was around half of the actual value for the coefficient, so we replaced chlorides with fixed acidity, the next best predictor according to our ANOVA analysis. This increased the $R^{2}$ value from 0.3185 to 0.3220, and all variables are significant.
+
+In comparison to (Cortez et al., 2009), our accuracy is slightly worse. Strictly considering correct predictions over all predictions, their SVM model returned an accuracy of 62.4% and the multiple regression model an accuracy of 59.1%. Given that for multiple regression, they used 9.2 features on average in their k-fold process. We were able to approach that accuracy with ANOVA feature selection and regression analysis on only 5 features. Our accuracy was slightly lower at 46.07%, but this is still better than random selection and not far off given the reduction in predictors.
+
+Future work would consist of trying different models, such as SVM, to see how well they predict quality based on our selected features. It is likely that the function mapping physicochemical properties to quality is non-linear, which violates our linear regression assumption. However, we were able to get decent results through a simple linear model. It would be useful for a future dataset to have more balanced classes, as this would likely improve our model significantly. Being able to recreate similar results to published work with fewer features would be an enormous benefit to the wine industry, reducing costs for quality control as there would be no need to invest in a system that captures every feature of the wine, or even all 11 covered in our dataset. 
+
+# References
+Organisation Internationale de la Vigne et du Vine (OIV), State of the Vitiviniculture World Market, April 2018. http://www.oiv.int/public/medias/5958/oiv-state-of-the-vitiviniculture-world-market-april-2018.pdf
+
+Ebeler S., Flavor Chemistry — Thirty Years of Progress, Kluwer Academic
+Publishers, 1999, pp. 409–422, chapter Linking flavour chemistry to sensory
+analysis of wine.
+
+Cortez, P. et al., Modeling wine preferences by data mining from physicochemical properties, Decision Support Systems 47 (2009) 547-553.
+
+Hastie T.,Tibshirani R.,Friedman J., The Elements of Statistical Learning: Data
+Mining, Inference and Prediction, Springer-Verlag, NY, USA, 2001.
+
+Wikipedia, Acids in Wine, 2019. https://en.wikipedia.org/wiki/Acids_in_wine
+
+Wikipedia, Sweetness in wine, 2019. https://en.wikipedia.org/wiki/Sweetness_of_wine 
+
+Wikipedia, Sulfur Dioxide (In winemaking), 2019. https://en.wikipedia.org/wiki/Sulfur_dioxide
+
+
+
